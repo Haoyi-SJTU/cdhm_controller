@@ -1,20 +1,14 @@
 #include <communication.h>
 
+
+
 Communication::Communication() : QObject()
 {
     Cur_Motor_Pos1=Eigen::MatrixXd::Zero(12,3);
     Cur_Ang1=Eigen::MatrixXd::Zero(12,2);
 
-    //flag初始化
-    Board_A_Flag = false;
-
+    Board_A_Flag = false;//标志 接收到的TCP数据包非空
     ConnSuccess = false;//连接F407标志位
-    //用于开启标定数据文档
-    clb_flag = false;
-
-    sec9_Hor_Ang_last=0;
-    first_flag=false;
-
 }
 
 
@@ -25,10 +19,7 @@ void Communication:: Tcp_connect(){
     TcpClientA->setSocketOption(QAbstractSocket::LowDelayOption,1);
     TcpClientA->connectToHost("192.168.1.251",80); //IP以及端口号
 
-    bool connect_A=TcpClientA->waitForConnected(30000);
-
-    ConnSuccess=connect_A;
-
+    ConnSuccess=TcpClientA->waitForConnected(30000);
     connect(TcpClientA,SIGNAL(readyRead()),this,SLOT(ReadData_A()));
 }
 
@@ -51,20 +42,12 @@ void Communication::Tcp_close()
 
 
 
-// 向4个F407发送统一的数据
+// 向F407发送统一的数据
 void Communication::SendTcpData(QByteArray msg){
-    // if((TcpClientA->isOpen()&&TcpClientB->isOpen()&&TcpClientC->isOpen()&&TcpClientD->isOpen())&&ConnSuccess){
     if((TcpClientA->isOpen())&&ConnSuccess)
     {
         TcpClientA->write(msg);
-        // TcpClientB->write(msg);
-        // TcpClientC->write(msg);
-        // TcpClientD->write(msg);
-
         TcpClientA->flush();
-        // TcpClientB->flush();
-        // TcpClientC->flush();
-        // TcpClientD->flush();
     }
     else{
         ConnSuccess=false;
@@ -136,7 +119,7 @@ void Communication::Send_POS(Eigen::MatrixXd Len_Diff,double base_Diff)
         *(char *) (TCP_SendData+2) = 'O';
         *(char *) (TCP_SendData+3) = 'S';
 
-        for(i = SEC_START_INDEX; i <= SEC_END_INDEX; i++)
+        for(i = SEC_START_INDEX; i <SECTION_NUM; i++)
         {
             for(j = 0; j < 3; j++)
             {
@@ -239,6 +222,7 @@ void Communication::Send_PPM()
         SendDatagram_motor_value.resize(4);
         memcpy(SendDatagram_motor_value.data(),TCP_SendData,sizeof(TCP_SendData));
         SendTcpData(SendDatagram_motor_value);//"#PPM"发送给电机
+        PPM_Flag = true;
     }
     else
     {
@@ -266,7 +250,7 @@ void Communication::Send_ClearErr()
     }
 }
 
-//未使用
+//
 void Communication::Send_Calibration()
 {
     //TCP通信
@@ -289,64 +273,14 @@ void Communication::Send_Calibration()
 }
 
 
-// 标定磁缸时 开始标定按钮触发槽函数
-// 开启一个txt文本存储数据
-void Communication::clb_start(char *clb_filename){
-    clb_flag = true;
-    clb_of.open(clb_filename);
-}
-
-
-// 标定磁缸时 停止标定按钮触发槽函数
-// 关闭txt文本,停止写入
-void Communication::clb_stop(){
-    clb_flag = false;
-    clb_of.close();
-}
-
-
-// Tcp_Thread::Recv_All
-// 读电机位置和关节编码器 发布为信号Return_Cur_Motor_Pos
-// 判断是否都已经收到4个stm32数据;
+// 读电机位置和关节编码器 发布为信号Return Cur Motor Pos
 void Communication::Recv_All()
 {
-    int i,j;
+    // int i,j;
     if(Board_A_Flag)
     {
         Board_A_Flag=false;
-
-        for(i = 0; i < SEC_START_INDEX; i++){
-            for(j=0; j<2; j++){
-                Cur_Ang1(i,j) = 0;
-            }
-        }
-        for(i = SEC_END_INDEX+1; i<12; i++){
-            for(j=0; j<2; j++){
-                Cur_Ang1(i,j) = 0;
-            }
-        }
-
-        if(sec9_Hor_Ang_last==0&&first_flag==false)
-        {
-            sec9_Hor_Ang_last = Cur_Ang1(8,0);//首次数据存储
-            first_flag=true;
-        }
-        else
-        {
-            if(Cur_Ang1(8,0)!=0)
-                sec9_Hor_Ang_last=Cur_Ang1(8,0);//更新数据
-            else
-                if(sec9_Hor_Ang_last!=0)
-                    Cur_Ang1(8,0)=sec9_Hor_Ang_last;
-                else
-                    sec9_Hor_Ang_last=Cur_Ang1(8,0);//更新数据
-        }
-
-        // for(int i=0;i<12;i++)
-            // cout<<"Cur_Ang1 "<<i<<" "<<Cur_Ang1(i,0)<<", "<<Cur_Ang1(i,1)<<endl;
-
         emit(Return_Cur_Motor_Pos(Cur_Motor_Pos1, Cur_Ang1));
-
         Cur_Motor_Pos1=Eigen::MatrixXd::Zero(12,3);
     }
 }
@@ -354,39 +288,23 @@ void Communication::Recv_All()
 
 void Communication::ReadData_A()
 {
-    quint8 motor_index[9]={1,2,3,4,5,6,7,8,9};
     QByteArray RecvData = TcpClientA->readAll();
-    // qDebug() << "Hex (with spaces):" << RecvData.toHex(' ');
     quint8 TCP_RecvData[400]={0};
     int i,j;
-    //qDebug()<<"---------------A---------";
-
-    //    //斜率标定使用，需要修改K值以保存数据
-    //    if(!RecvData.isEmpty()&& clb_flag){
-    //        Board_A_Flag=true;
-    //        memcpy(&TCP_RecvData,RecvData.data(),RecvData.size());
-    //        for(int k=6; k<7; k++){
-    //            clb_of << *(double *)(TCP_RecvData+(k+9)*8) << "\t";
-    //            qDebug() <<"CLB"<<*(double *)(TCP_RecvData+(k+9)*8);
-    //        }
-    //        clb_of << "\n";
-    //    }
 
     //TCP
     if(!RecvData.isEmpty())
     {
         Board_A_Flag=true;
-        memcpy(&TCP_RecvData,RecvData.data(),RecvData.size());//把RecvData复制给TCP_RecvData
+        memcpy(&TCP_RecvData,RecvData.data(),RecvData.size());//RecvData复制给TCP_RecvData
         for(int k=0;k<9;k++){
-            i=(motor_index[k]-1)%12;
-            j=(motor_index[k]-1)/12;
-            Cur_Motor_Pos1(i,j) = *(double *)(TCP_RecvData+k*8);
+            Cur_Motor_Pos1(k,0) = *(double *)(TCP_RecvData+k*8);//TCP关节角数据解包 转double类型
         }
-        for(int k=0; k<8; k++){
-            i = k / 2; // 行索引：0,0,1,1,2,2,3,3
-            j = k % 2; // 列索引：0,1,0,1,0,1,0,1
+        for(int k=0; k<6; k++){
+            i = k / 2; // 行索引：0,0,1,1,2,2
+            j = k % 2; // 列索引：0,1,0,1,0,1
             Cur_Ang1(i,j) = *(double *)(TCP_RecvData+(k+9)*8);
-            cout<<"Cur_Ang1("<<i<<","<<j<<")="<<Cur_Ang1(i,j)<<endl;
+            // cout<<"Cur_Ang1("<<i<<","<<j<<")="<<Cur_Ang1(i,j)<<endl;
         }
     }
 

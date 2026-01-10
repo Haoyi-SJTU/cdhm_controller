@@ -30,16 +30,10 @@
 #define MAX_ANG 8000//关节角度限制
 
 
-extern const int SEC_START_INDEX;//关节范围限制：start 0  end 2
-extern const int SEC_END_INDEX;
-extern const int SECTION_NUM;//总关节数
+extern const int SEC_START_INDEX;//关节范围限制 0
+extern const int SECTION_NUM;//总关节数 3
 
-// extern double JoyL_x,JoyL_y;//左摇杆坐标范围
-// extern double JoyR_x,JoyR_y;//右摇杆坐标范围
-// extern bool Joy_Return_Flag ,Joy_Move_Flag;
-// extern bool JoyLB,JoyRB;
-
-extern int CLB_FLAG;
+// extern int CLB_FLAG;
 
 using namespace std;
 
@@ -73,8 +67,8 @@ signals:
     void sig_current(int,int,int, int);
     void sig_PPM();
     void sig_angle(int);
-    void sig_clb_start(char *);
-    void sig_clb_stop();
+    // void sig_clb_start(char *);
+    // void sig_clb_stop();
     void sig_singleCurrent(int,int,int,int,int);
     void Tele_Caculate(double, double, const bool, const bool);
 
@@ -87,8 +81,8 @@ private:
     bool STM32_Flag;
     bool Total_Stop_Flag;
     bool Record_Angle_Flag;
-    bool PPM_Flag;
-    bool Ready_Flag;
+    // bool PPM_Flag; //标志 电机切换为PPM位置模式
+    // bool Ready_Flag; //似乎重复 也是看有没有进入ppm?????????????
     bool Feedback_Recv_Flag; // 下位机数据接收完成标志位
     bool CurMode_PPM_Flag;//电流模式下切回位置模式标志位
     bool MultiMotor_CurMode_Flag;//各电流模式互斥标志位
@@ -99,14 +93,13 @@ private:
     bool Setzero_Move_Flag;//回零标志位
     bool Joint_Move_Flag;//角度运动标志位
     bool Tension_alert_send_flag; //前一次张力监控标识符
-    bool Tele_Flag;//手柄遥控标志位
     bool Tele_Ready_Flag;//在线规划完成标志位
     bool SetZero_Done_Flag;//回零完成标志位
     bool Save_Force_Flag;//1 导出力传感器数据 0 停止导出
 
     int control_mode;// 控制模式  1角度  2力
     int setZero_cur_stage;//reach_target 当前回零阶段
-    int Sec_Setzero_Startindex;
+    int Sec_Setzero_Startindex; //回零起始范围
     int Sec_Setzero_Endindex;
     int Planned_Frame;//离线路径帧数
 
@@ -122,7 +115,7 @@ private:
     double Tar_Ang[3][2];//目标关节角度
     double JointMove_TarAng[3][2];//关节运动目标角度
     double Cur_Motor_Pos[3][3];//Maxon当前电机绝对位置
-    double Cur_Motor_Pos_Ready[3][3];//预紧后Maxon当前电机绝对位置
+    // double Cur_Motor_Pos_Ready[3][3];//预紧后Maxon当前电机绝对位置
     double Tar_Bias[3][2];//角度补偿 行：关节 列：水平α 竖直β
 
     double Force_array_bias[3][3];//拉力传感器零位偏移量
@@ -131,11 +124,9 @@ private:
     double Force_array[3][3];//拉力传感器数据 以关节绳号存储
      double Force_array_last[12][3];//上一帧拉力传感器数据 用于绳长补偿
 
-    double Driven_Len[3][3];//当前角度对应的当前关节段绳长
-    double Driven_Len_Ready[3][3];//似乎一样?也是当前角度对应的当前关节段绳长
+    // double Driven_Len[3][3];//当前角度对应的当前关节段绳长
 
     double Pre_Angle_Diff[3][3];
-    Eigen::MatrixXd sec_cable_elon;
 
     double Sec12_Tar_Ang[2];//末端关节水平与竖直角度存储
     double Sec12_Tar_Ang_Init[2];
@@ -194,8 +185,8 @@ private slots:
 
     //ui界面槽函数
     void on_STM32_Con_Button_clicked();
-    void on_calibration_Button_clicked();
-    void on_calibration_Stop_Button_clicked();
+    // void on_calibration_Button_clicked();
+    // void on_calibration_Stop_Button_clicked();
     void on_Total_Stop_Button_clicked();
     void on_Record_Angle_Open_pushButton_clicked();
     void on_forceRead_pushButton_clicked();
@@ -215,9 +206,7 @@ private slots:
     void on_SetZero_pushButton_clicked();
     // void on_Tele_Button_clicked();
     void on_Planned_Motion_Button_clicked();//按下Planned_Motion_Button后 加载预规划路径
-    void on_Base_Run_Button_clicked();
     void on_serialCon_pushButton_clicked();
-    void on_tipTool_pushButton_clicked();
     void on_set_best_force_tar_btn_clicked();
     void on_set_P_ZeroForce_btn_clicked();
     void on_set_P_Angle_btn_clicked();
