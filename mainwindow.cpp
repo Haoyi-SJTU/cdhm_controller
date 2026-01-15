@@ -67,12 +67,12 @@ void MainWindow::parm_init()
     memset(Tar_Bias, 0, sizeof(Tar_Bias));//角度零位偏移量
 
     //角度零位偏移量
-    Tar_Bias[0][0] = -0.58;//1a 水平
-    Tar_Bias[0][1] = -3;//2b 竖直
-    Tar_Bias[1][0] = -0.3;//2a 水平
-    Tar_Bias[1][1] = 0.08;//2b 竖直
-    Tar_Bias[2][0] = 1.32; //3a 水平
-    Tar_Bias[2][1] = -2.79; //3b 竖直
+    Tar_Bias[0][0] = -0.63;//1a 水平
+    Tar_Bias[0][1] = 0.0;//2b 竖直
+    Tar_Bias[1][0] = 0.25;//2a 水平
+    Tar_Bias[1][1] = -0.74;//2b 竖直
+    Tar_Bias[2][0] = -1.23; //3a 水平
+    Tar_Bias[2][1] = -2.27; //3b 竖直
 
     // 力传感器零位偏移量
     Force_array_bias[0][0] = 0;//1-1
@@ -85,13 +85,13 @@ void MainWindow::parm_init()
     Force_array_bias[2][1] = 0;
     Force_array_bias[2][2] = 0;
 
-    tarAng_delta_thr=0.5;//角度回零阈值 单位度
-    P_ZeroForce=0.00001;//角度回零后，零位保持阈值
+    //角度回零
+    P_ZeroForce=0.00001;      //角度回零后，零位保持阈值
+    setZero_cur_stage=0;      //显示当前进行回零的关节号
+    Sec_Setzero_Startindex=0; //回零起始范围
+    Sec_Setzero_Endindex=0;
 
-    // 机械臂运动 角度PID参数
-    P_Angle = 0.7;
-    I_Angle = 0.005;
-    Pre_Angle_Diff_Max = 2; //积分I项 角度误差累积限幅 2度
+    control_mode = 1;
 
     //力回零参数
     P_Force=0.0005;//角度回零 与力配合 p参数
@@ -101,16 +101,16 @@ void MainWindow::parm_init()
     best_force_tar[2]= 80; //零位时驱动绳理想张力 关节2
     Force_Threshold=10;//力平衡阈值
 
-    control_mode = 0 ;
-    setZero_cur_stage=0;//显示当前进行回零的关节号
-    Zero_or_autoForce_Switch = 0;
-    Sec_Setzero_Startindex=0;
-    Sec_Setzero_Endindex=0;
+    // 机械臂运动 角度PID参数
+    tarAng_delta_thr=0.3;//角度阈值 单位度
+    P_Angle = 0.7;
+    I_Angle = 0.005;
+    Pre_Angle_Diff_Max = 2; //积分I项 角度误差累积限幅 2度
+
 
     Ang_Tele = Eigen::VectorXd::Zero(25,1);
+    trajectory_count = 0;// 离线路径 计数器
 
-    Cur_Base_Pos=0;
-    base_move_length = 0;
 
     PLAN_FRAME=20;
     Planned_Frame=0;
@@ -192,9 +192,9 @@ void MainWindow::Recv_Cur_Motor_Pos(Eigen::MatrixXd Read_Cur_Motor_Pos, Eigen::M
     Cur_Ang[0][0] = -(Read_Cur_Ang(0,0) - Tar_Bias[0][0]); //1a
     Cur_Ang[0][1] = -(Read_Cur_Ang(0,1) - Tar_Bias[0][1]); //1b
     Cur_Ang[1][0] = -(Read_Cur_Ang(1,0) - Tar_Bias[1][0]); //2a
-    Cur_Ang[1][1] =  Read_Cur_Ang(1,1)  - Tar_Bias[1][1];  //2b
+    Cur_Ang[1][1] = -(Read_Cur_Ang(1,1) - Tar_Bias[1][1]); //2b
     Cur_Ang[2][0] = -(Read_Cur_Ang(2,0) - Tar_Bias[2][0]); //3a
-    Cur_Ang[2][1] =  Read_Cur_Ang(2,1) -  Tar_Bias[2][1];  //3b
+    Cur_Ang[2][1] =   Read_Cur_Ang(2,1) - Tar_Bias[2][1];  //3b
 
     Feedback_Recv_Flag = true;//下位机数据接收完成
 
@@ -496,6 +496,29 @@ bool MainWindow::force_refine(Eigen::MatrixXd& secDrivenLength,int i)
     return Force_flag;
 }
 
+//从离线路径中加载单步运动目标
+inline void MainWindow::read_trajectory_1step()
+{
+    if (trajectory_count < Planned_Frame)//Planned_Frame存放离线路径的总帧数
+    {
+        for (int i=0;i<SECTION_NUM;i++)//Motion_Data 6个关节规划值
+        {
+            JointMove_TarAng[i][0] = Motion_Data[trajectory_count][2*i] * 180.0 / PI;
+            JointMove_TarAng[i][1] = Motion_Data[trajectory_count][2*i+1] * 180.0 / PI;
+        }
+        ui->Planned_Frame_Num->setText(QString::number(trajectory_count+1));
+        trajectory_count++;
+        Joint_Move_Flag = true;
+    }
+    else
+    {
+        SetTip("离线路径读取完毕");
+        trajectory_count = 0;
+        Planned_Motion_Flag = false;
+        Joint_Move_Flag = false;
+    }
+}
+
 // 控制机械臂到达某个目标 Timer_Reach_Target定时器按照 触发
 void MainWindow::Reach_Target()
 {
@@ -510,178 +533,117 @@ void MainWindow::Reach_Target()
     ui->label_Force_Threshold_read->setText(QString::number(Force_Threshold,'f',2));//力平衡阈值
     ui->setZero_cur_stage_lable->setText(QString::number(setZero_cur_stage));//显示当前进行回零的关节号
 
-    //显示当前控制模式
-    if(control_mode == 1)//角度模式
-        ui->cur_control_mode->setText("角度回零中");
-    if(control_mode == 2)//力模式
-        ui->cur_control_mode->setText("力平衡中");
-
     quint16 i, j;
     double Ang_Diff_Max = 7.0/ (1000.0/CONTROL_PERIOD); //最大运动速度7度/s，折算出每帧最大运动量 7 degree/ 20Hz
     Eigen::MatrixXd secDrivenLength = Eigen::MatrixXd::Zero(SECTION_NUM,3);//钢丝绳驱动长度 默认设置钢丝绳驱动量为0（不需要驱动）
     double Tar_Ang_P[SECTION_NUM][2];
     memset(Tar_Ang_P, 0, sizeof (Tar_Ang_P));
     bool Emit_Flag = false;//防止多次Emit信号的标志位
-    // static int outer_count = 0;// 离线路径 使用
 
+    // 离线路径
+    if(Planned_Motion_Flag)
+        read_trajectory_1step(); //从离线路径中加载单步运动目标
 
-    if (control_mode == 1)
+    //------ 运动模式 -------：关节运动到JointMove TarAng位置
+    if(Joint_Move_Flag)
     {
-        //------ 运动模式 -------：关节运动到JointMove TarAng位置
-        if(Joint_Move_Flag)
+        for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
         {
-            for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
+            Tar_Ang[i][0] = (fabs(JointMove_TarAng[i][0] - Cur_Ang[i][0]) > tarAng_delta_thr) ? JointMove_TarAng[i][0] : Cur_Ang[i][0];
+            Tar_Ang[i][1] = (fabs(JointMove_TarAng[i][1] - Cur_Ang[i][1]) > tarAng_delta_thr) ? JointMove_TarAng[i][1] : Cur_Ang[i][1];
+        }
+    }
+    //------ 回零模式 ---------：指定范围(Sec Setzero Startindex 到 Sec Setzero Endindex)的关节运动至0位
+    else if (Setzero_Move_Flag)
+    {
+        for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
+        {
+            if (i >= Sec_Setzero_Startindex && i <= setZero_cur_stage)//当前正在处理的关节 和已经回零的关节 保持零位不动
             {
+                JointMove_TarAng[i][0] = 0;
+                JointMove_TarAng[i][1] = 0;
                 Tar_Ang[i][0] = (fabs(JointMove_TarAng[i][0] - Cur_Ang[i][0]) > tarAng_delta_thr) ? JointMove_TarAng[i][0] : Cur_Ang[i][0];
                 Tar_Ang[i][1] = (fabs(JointMove_TarAng[i][1] - Cur_Ang[i][1]) > tarAng_delta_thr) ? JointMove_TarAng[i][1] : Cur_Ang[i][1];
             }
-        }
-        //------ 回零模式 ---------：指定范围(Sec Setzero Startindex 到 Sec Setzero Endindex)的关节运动至0位
-        else if (Setzero_Move_Flag)
-        {
-            for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
-            {
-                if (i >= Sec_Setzero_Startindex && i <= setZero_cur_stage)//当前正在处理的关节 和已经回零的关节 保持零位不动
-                {
-                    JointMove_TarAng[i][0] = 0;
-                    JointMove_TarAng[i][1] = 0;
-                    Tar_Ang[i][0] = (fabs(JointMove_TarAng[i][0] - Cur_Ang[i][0]) > tarAng_delta_thr) ? JointMove_TarAng[i][0] : Cur_Ang[i][0];
-                    Tar_Ang[i][1] = (fabs(JointMove_TarAng[i][1] - Cur_Ang[i][1]) > tarAng_delta_thr) ? JointMove_TarAng[i][1] : Cur_Ang[i][1];
-                }
-                else//尚未轮到的关节 保持当前角度不变
-                {
-                    Tar_Ang[i][0] = Cur_Ang[i][0];
-                    Tar_Ang[i][1] = Cur_Ang[i][1];
-                }
-            }
-
-            // 递增当前回零阶段（准备处理下一组关节）
-            if (setZero_cur_stage <= Sec_Setzero_Endindex)
-                if(fabs(Cur_Ang[setZero_cur_stage][0]) <= tarAng_delta_thr && fabs(Cur_Ang[setZero_cur_stage][1]) <= tarAng_delta_thr)
-                    setZero_cur_stage++;
-
-            //处于回零模式 且 所有需回零关节均已到位
-            if (setZero_cur_stage > Sec_Setzero_Endindex)
-            {
-                bool Zero_Reached_Flag = true;
-                int failed_index = -1;
-                for(i = Sec_Setzero_Startindex; i <= Sec_Setzero_Endindex; i++)
-                {
-                    if(fabs(Cur_Ang[i][0]) > tarAng_delta_thr || fabs(Cur_Ang[i][1]) > tarAng_delta_thr)
-                    {
-                        Zero_Reached_Flag = false;
-                        failed_index = i;
-                        break;
-                    }
-                    // force_refine(secDrivenLength, i);// 角度回零后对驱动绳张力重新调整 仅在回零时启动
-                }
-
-                if(Zero_Reached_Flag)// ​全域验证​​：检查所有回零关节段是否真正到达零位
-                {
-                    Setzero_Move_Flag = false;
-                    cout<<"角度回零已完成!"<<endl;
-                    on_SetZero_pushButton_clicked();
-                }
-                else
-                    setZero_cur_stage = failed_index;
-            }
-        }
-        //------ 无模式 保持现状 -------
-        else
-        {
-            for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
+            else//尚未轮到的关节 保持当前角度不变
             {
                 Tar_Ang[i][0] = Cur_Ang[i][0];
                 Tar_Ang[i][1] = Cur_Ang[i][1];
             }
         }
+
+        // 递增当前回零阶段（准备处理下一组关节）
+        if (setZero_cur_stage <= Sec_Setzero_Endindex)
+            if(fabs(Cur_Ang[setZero_cur_stage][0]) <= tarAng_delta_thr && fabs(Cur_Ang[setZero_cur_stage][1]) <= tarAng_delta_thr)
+                setZero_cur_stage++;
+
+        //处于回零模式 且 所有需回零关节均已到位
+        if (setZero_cur_stage > Sec_Setzero_Endindex)
+        {
+            bool Zero_Reached_Flag = true;
+            int failed_index = -1;
+            for(i = Sec_Setzero_Startindex; i <= Sec_Setzero_Endindex; i++)
+            {
+                if(fabs(Cur_Ang[i][0]) > tarAng_delta_thr || fabs(Cur_Ang[i][1]) > tarAng_delta_thr)
+                {
+                    Zero_Reached_Flag = false;
+                    failed_index = i;
+                    break;
+                }
+                if(control_mode == 2)
+                    force_refine(secDrivenLength, i);// 角度回零后对驱动绳张力重新调整 仅在回零时启动
+            }
+
+            if(Zero_Reached_Flag)// ​全域验证​​：检查所有回零关节段是否真正到达零位
+            {
+                Setzero_Move_Flag = false;
+                SetTip("角度回零已完成");
+                on_SetZero_pushButton_clicked();
+            }
+            else
+                setZero_cur_stage = failed_index;
+        }
+    }
+    //------ 无模式 保持现状 -------
+    else
+    {
+        for(i=SEC_START_INDEX; i<SECTION_NUM; i++)
+        {
+            Tar_Ang[i][0] = Cur_Ang[i][0];
+            Tar_Ang[i][1] = Cur_Ang[i][1];
+        }
     }
 
-    // //////////////力回零模式///////////////
-    // if(control_mode==2 && Setzero_Move_Flag)
-    // {
-    //     for (i = 0; i < 3; i++)
-    //     {
-    //         for (j = 0; j < 3; j++)
-    //         {
-    //             double target_force=best_force_tar[i];
-    //             double min_force_tar=target_force-Force_Threshold;
-    //             double max_force_tar=target_force+Force_Threshold;
-    //             secDrivenLength(i,j) = 0;
+    cout<<"target angle= "<<Tar_Ang[0][0]<<" "<<Tar_Ang[0][1]<<" "<<Tar_Ang[1][0]<<" "<<Tar_Ang[1][1]<<" "<<Tar_Ang[2][0]<<" "<<Tar_Ang[2][1]<<endl;
 
-    //             double Force_array_tmp = fabs(Force_array[i][j]);
-
-    //             //动态p
-    //             double Force_diff = fabs(Force_array_tmp - target_force);
-    //             double P_Force_dyn;
-    //             if (Force_diff > 20)
-    //                 P_Force_dyn = 2*P_Force;
-    //             else
-    //                 P_Force_dyn = P_Force;
-
-    //             if (Force_array_tmp>max_force_tar && Force_array[i][j]<0)
-    //             {
-    //                 secDrivenLength(i,j) = -P_Force_dyn * ( Force_array_tmp - target_force );
-    //             }
-    //             else if(Force_array_tmp<min_force_tar)
-    //             {
-    //                 secDrivenLength(i,j) = P_Force_dyn * ( target_force - Force_array_tmp );
-    //             }
-    //         }
-    //     }
-    // }
-
-    // ////////////////////// 离线路径 ///////////////////////////////
-    // if(Planned_Motion_Flag)
-    // {
-    //     cout<<"传输离线路径"<<endl;//debug
-    //     if (outer_count < Planned_Frame)//Planned_Frame存放离线路径的总帧数
-    //     {
-    //         for (i=0;i<SECTION_NUM;i++)//Motion_Data 6个关节规划值
-    //         {
-    //             Tar_Ang[i][0] = Motion_Data[outer_count][2*i] * 180.0 / PI;
-    //             Tar_Ang[i][1] = Motion_Data[outer_count][2*i+1] * 180.0 / PI;
-    //         }
-    //         ui->Planned_Frame_Num->setText(QString::number(outer_count+1));
-    //         outer_count++;
-    //     }
-    //     else
-    //     {
-    //         cout<<"离线路径传输完毕"<<endl;
-    //         outer_count = 0;
-    //         Planned_Motion_Flag = false;
-    //     }
-    // }
 
 
     // /////////////////P控制位置-----计算驱动量/////////////////////////////
-    // 根据目标角度计算驱动量
-    if(control_mode==1 && Zero_or_autoForce_Switch==0 ) //力平衡过程不参与角度P控制
+    // 根据目标角度计算P
+    double P_dyn = 0;
+    for (i = SEC_START_INDEX; i < SECTION_NUM; i++)
     {
-        double P_dyn = 0;
-        for (i = SEC_START_INDEX; i < SECTION_NUM; i++)
+        for (j = 0; j < 2; j++)
         {
-            for (j = 0; j < 2; j++)
+            double Ang_delta = Tar_Ang[i][j] - Cur_Ang[i][j];
+            if(fabs(Ang_delta) >= tarAng_delta_thr && fabs(Ang_delta) < 15)// 屏蔽 大于15度 过小 的角度误差
+                P_dyn = P_Angle;//固定比例项系数 0.7
+            else
+                P_dyn = 0;
+
+            Tar_Ang_P[i][j] =Cur_Ang[i][j] + Ang_delta * P_dyn + Pre_Angle_Diff[i][j] * I_Angle;//I 0.002
+            Pre_Angle_Diff[i][j] += Ang_delta;//从时间0到当前时刻 误差的累积
+            if(Pre_Angle_Diff[i][j] > Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = Pre_Angle_Diff_Max;// 角度误差累积限幅
+            if(Pre_Angle_Diff[i][j] < -Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = -Pre_Angle_Diff_Max;
+
+            double Tar_Ang_P_delta = Tar_Ang_P[i][j] - Cur_Ang[i][j]; // 调整后的目标位置变化量
+            if (fabs(Tar_Ang_P_delta) >= Ang_Diff_Max)// 输出限幅：防止单步变化过大
             {
-                double Ang_delta = Tar_Ang[i][j] - Cur_Ang[i][j];
-                if(fabs(Ang_delta) >= tarAng_delta_thr && fabs(Ang_delta) < 15)// 屏蔽 大于15度 过小 的角度误差
-                    P_dyn = P_Angle;//固定比例项系数 0.7
-                else
-                    P_dyn = 0;
-
-                Tar_Ang_P[i][j] =Cur_Ang[i][j] + Ang_delta * P_dyn + Pre_Angle_Diff[i][j] * I_Angle;//I 0.005
-                Pre_Angle_Diff[i][j] += Ang_delta;//从时间0到当前时刻 误差的累积
-                if(Pre_Angle_Diff[i][j] > Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = Pre_Angle_Diff_Max;// 角度误差累积限幅
-                if(Pre_Angle_Diff[i][j] < -Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = -Pre_Angle_Diff_Max;
-
-                double Tar_Ang_P_delta = Tar_Ang_P[i][j] - Cur_Ang[i][j]; // 调整后的目标位置变化量
-                if (fabs(Tar_Ang_P_delta) >= Ang_Diff_Max)// 输出限幅：防止单步变化过大
-                {
-                    const int sign = (Tar_Ang_P_delta > 0) ? 1 : -1;// 计算符号
-                    Tar_Ang_P[i][j] = Cur_Ang[i][j] + sign * Ang_Diff_Max;;// 限制调整后的目标位置
-                }
+                const int sign = (Tar_Ang_P_delta > 0) ? 1 : -1;// 计算符号
+                Tar_Ang_P[i][j] = Cur_Ang[i][j] + sign * Ang_Diff_Max;;// 限制调整后的目标位置
             }
         }
+    }
 
         // /////////////正运动学////////////////////
         secDrivenLength = Cal_Len_Diff(Tar_Ang_P, Cur_Ang);
@@ -689,7 +651,7 @@ void MainWindow::Reach_Target()
         // for (int row = 0; row < 3; row++)
         //     cout << secDrivenLength(row,0) << " "<< secDrivenLength(row,1) << " "<< secDrivenLength(row,2) << " ";
         // cout << endl;
-    }
+
 
 
     if(Save_Force_Flag)
@@ -800,7 +762,7 @@ void MainWindow::on_forceRead_pushButton_clicked()
     if(ui->serialCon_pushButton->text()=="断开")//已连接485 此时按钮切换为断开
     {
         if( ui->forceRead_pushButton->text()=="读取"){
-            Timer_forceRead->start(50);//定时器开启 每50ms触发forceread()
+            Timer_forceRead->start(FORCE_PERIOD);//定时器开启 每50ms触发forceread()
             ui->forceRead_pushButton->setText("关闭");
 
         }else{
@@ -1021,7 +983,6 @@ void MainWindow::on_secMotor_Pull_Button_clicked()
         msecSleep(delay_ms);
         ui->secMotor_Pull_Button->setEnabled(true);
         ui->secMotor_Loose_Button->setEnabled(true);
-        // Timer_Reach_Target->start(CONTROL_PERIOD);
         Total_Start();//开始触发reach_target函数
     }
 }
@@ -1070,7 +1031,6 @@ void MainWindow::on_secMotor_Loose_Button_clicked()
         msecSleep(delay_ms);
         ui->secMotor_Pull_Button->setEnabled(true);
         ui->secMotor_Loose_Button->setEnabled(true);
-        // Timer_Reach_Target->start(CONTROL_PERIOD);
         Total_Start();//开始触发reach_target函数
     }
 }
@@ -1114,7 +1074,6 @@ void MainWindow::on_secMotor_Stop_Button_clicked()
     Continue_Pull_Flag = false;
     Continue_Loose_Flag = false;
     Timer_secMotor->stop();
-    // Timer_Reach_Target->start(CONTROL_PERIOD);//重新开启reach_target
     Total_Start();//开始触发reach_target函数
 }
 
@@ -1138,43 +1097,26 @@ void MainWindow::on_angSet_pushButton_clicked()
 // 第2页辅助功能 设定角度后,运动至该目标 按钮
 void MainWindow::on_angStart_pushButton_clicked()
 {
-
-    if(ui->forceRead_pushButton->text()=="读取")
-    {
-        QMessageBox::information(nullptr,"警告","请打开拉力传感器后再试！");
+    if (!check_all())// 检查项: 角度传感器 传感器接收 PPM模式 力超限
         return;
-    }
-
-    if(!Record_Angle_Flag)
-    {
-        QMessageBox::information(nullptr,"警告","请先打开角度传感器，确保角度数据读取正常后再试！");
-        return;
-    }
 
     if(ui->angStart_pushButton->text()=="运动至目标")
     {
-        if(control_mode == 1){
-            for (int i = SEC_START_INDEX; i < SECTION_NUM; ++i) {
+        for (int i = SEC_START_INDEX; i < SECTION_NUM; ++i) {
 
-                QLineEdit* tarAng_h = this->findChild<QLineEdit*>("Tar_Hor_Ang"+QString::number(i+1));
-                QLineEdit* tarAng_v = this->findChild<QLineEdit*>("Tar_Ver_Ang"+QString::number(i+1));
+            QLineEdit* tarAng_h = this->findChild<QLineEdit*>("Tar_Hor_Ang"+QString::number(i+1));
+            QLineEdit* tarAng_v = this->findChild<QLineEdit*>("Tar_Ver_Ang"+QString::number(i+1));
 
-                JointMove_TarAng[i][0]=tarAng_h->text().toDouble();
-                JointMove_TarAng[i][1]=tarAng_v->text().toDouble();
-            }
-
-            emit(sig_PPM());
-            // PPM_Flag=true;
-            Joint_Move_Flag=true;
-            ui->angStart_pushButton->setText("停止");
+            JointMove_TarAng[i][0]=tarAng_h->text().toDouble();
+            JointMove_TarAng[i][1]=tarAng_v->text().toDouble();
         }
-        else {
-            QMessageBox::information(nullptr,"提示","控制模式未切换，无法运动至目标角度");
-        }
+
+        emit(sig_PPM());
+        Joint_Move_Flag=true;
+        ui->angStart_pushButton->setText("停止");
     }
     else
     {
-
         for(int i=SEC_START_INDEX;i<SECTION_NUM;i++)
         {
             for(int j=0;j<1;j++)
@@ -1214,27 +1156,9 @@ void MainWindow::on_SetZero_pushButton_clicked()
     emit(sig_PPM());//回零前先修改maxon电机控制模式为位置模式
     msecSleep(50);
 
-    if(!Record_Angle_Flag)
-    {
-        QMessageBox::information(nullptr,"提示","请打开角度传感器后重试！");
+    if (!check_all())// 检查项: 角度传感器 传感器接收 PPM模式 力超限
         return;
-    }
-    if(ui->forceRead_pushButton->text()=="读取")
-    {
-        QMessageBox::information(nullptr,"提示","请打开拉力传感器后重试！");
-        return;
-    }
 
-    //力控模式
-    if(control_mode==1)
-    {
-        bool isSecurity=Force_Check();
-        if(!isSecurity)
-        {
-            QMessageBox::warning(NULL, "警告", "最大张力超限！");
-            return;
-        }
-    }
     //开始回零
     if(ui->SetZero_pushButton->text()=="启动")
     {
@@ -1244,7 +1168,7 @@ void MainWindow::on_SetZero_pushButton_clicked()
 
         Setzero_Move_Flag=true;//回零运动状态
         setZero_cur_stage = Sec_Setzero_Startindex;
-        Zero_or_autoForce_Switch = false;
+        // Zero_or_autoForce_Switch = false;
 
         if(ui->current_controller->text()=="角度回零")
             control_mode=1;
@@ -1252,14 +1176,13 @@ void MainWindow::on_SetZero_pushButton_clicked()
             control_mode=2;
         ui->change_controller->setEnabled(false);
     }
-    // 停止回零
-    else
+    else// 停止回零
     {
         Sec_Setzero_Startindex=0;
         Sec_Setzero_Endindex=0;
 
         ui->SetZero_pushButton->setText("启动");
-        Zero_or_autoForce_Switch = false;
+        // Zero_or_autoForce_Switch = false;
         Setzero_Move_Flag=false;//回零运动状态
         setZero_cur_stage = Sec_Setzero_Startindex;
 
@@ -1293,7 +1216,6 @@ void MainWindow::on_singleRope_Current_pushButton_clicked()
         ui->singleRope_Current_pushButton->setEnabled(false);
         ui->singleRope_Current_pushButton->setText("电流搓紧");
         MultiMotor_CurMode_Flag=false;
-        // Timer_Reach_Target->start(CONTROL_PERIOD);
         Total_Start();//开始触发reach_target函数
     }
 }
@@ -1318,7 +1240,6 @@ void MainWindow::on_MultiMotor_Current_pushButton_clicked()
         ui->MultiMotor_Current_pushButton->setEnabled(false);
         ui->MultiMotor_Current_pushButton->setText("电流拉紧");
         MultiMotor_CurMode_Flag=false;
-        // Timer_Reach_Target->start(CONTROL_PERIOD);//开始触发reach_target函数
         Total_Start();//开始触发reach_target函数
     }
 }
@@ -1326,26 +1247,6 @@ void MainWindow::on_MultiMotor_Current_pushButton_clicked()
 
 // ------------------ plan 规划相关 ------------------------
 
-// debug向终端打印预规划路径
-void printMotionData(const std::vector<std::array<double, 6>>& motionData)
-{
-    // 设置输出格式：固定小数点，保留4位小数
-    std::cout << std::fixed << std::setprecision(4);
-
-    // 遍历所有帧数据
-    for (size_t frame = 0; frame < motionData.size(); ++frame) {
-        std::cout << "Frame " << std::setw(3) << frame << ": [";
-
-        // 输出当前帧的6个数值
-        for (size_t i = 0; i < 6; ++i) {
-            std::cout << std::setw(8) << motionData[frame][i];
-
-            // 在数值间添加逗号分隔（最后一个不加）
-            if (i < 5) std::cout << ", ";
-        }
-        std::cout << "]" << std::endl;
-    }
-}
 
 // 接收规划器给出的目标关节角 planning.cpp使用 发布规划结果
 void MainWindow::Recv_Ang_Path(Eigen::VectorXd Ang_Desired)
@@ -1358,8 +1259,26 @@ void MainWindow::Recv_Ang_Path(Eigen::VectorXd Ang_Desired)
     Tele_Ready_Flag = true;
 }
 
-// 按下Planned_Motion_Button后 加载预规划路径
-//读取txt planned_motion数据:Motion_Data24个关节角的规划值
+// ------------------ 离线路径相关 ------------------------
+// debug向终端打印预规划路径
+void printMotionData(const std::vector<std::array<double, 6>>& motionData)
+{
+    // 设置输出格式：固定小数点，保留4位小数
+    cout << fixed << setprecision(4);
+    // 遍历所有帧数据
+    for (size_t frame = 0; frame < motionData.size(); ++frame) {
+        cout << "Frame " << setw(3) << frame << ": [";
+
+        // 输出当前帧的6个数值
+        for (size_t i = 0; i < 6; ++i) {
+            cout << setw(8) << motionData[frame][i];
+            if (i < 5) cout << ", ";
+        }
+        cout << "]" << endl;
+    }
+}
+
+// 按下Planned_Motion_Button后 加载预规划路径 读取txt planned_motion数据 存入Motion_Data
 void MainWindow::on_Planned_Motion_Button_clicked()
 {
     //memset(Motion_Data,0,sizeof(Motion_Data));
@@ -1376,7 +1295,7 @@ void MainWindow::on_Planned_Motion_Button_clicked()
     }
     string lineData;
     Planned_Frame = 0;
-    SetTip("Loading planned motion data...");
+    SetTip("加载路径文件");
     while ((getline(iFile, lineData)))
     {
         istringstream is(lineData);// 将行数据转换为字符串流
@@ -1392,16 +1311,14 @@ void MainWindow::on_Planned_Motion_Button_clicked()
         Planned_Frame++;
     }
     iFile.close();
-    SetTip("Planned motion data loaded");
 
-    // debug
-    printMotionData(Motion_Data);
+
+    printMotionData(Motion_Data);// debug
 
     QString temp = QString("%1").arg(Planned_Frame);
     ui->Planned_Motion_Start_Button->setEnabled(true);
     ui->Planned_Frame_Total->setText(temp);
 }
-
 
 // 加载预规划路径 开始 按钮 显示路径长度+设置规划flag
 void MainWindow::on_Planned_Motion_Start_Button_clicked()
@@ -1409,6 +1326,7 @@ void MainWindow::on_Planned_Motion_Start_Button_clicked()
     ui->Planned_Motion_Start_Button->setEnabled(false);
     ui->Planned_Motion_Stop_Button->setEnabled(true);
     Planned_Motion_Flag=true;
+    Joint_Move_Flag=true;
 }
 
 void MainWindow::on_Planned_Motion_Stop_Button_clicked()
@@ -1417,7 +1335,6 @@ void MainWindow::on_Planned_Motion_Stop_Button_clicked()
     ui->Planned_Motion_Stop_Button->setEnabled(false);
     Planned_Motion_Flag = false;
 }
-
 
 
 void MainWindow::on_set_Ang_Threshold_btn_clicked()

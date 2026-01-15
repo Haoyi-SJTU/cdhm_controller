@@ -24,6 +24,7 @@
 
 #define Step_Test 0.02 //Maxon电机调试运动步长 一档速度
 #define CONTROL_PERIOD 50.0 //底层控制帧数 50ms/帧
+#define FORCE_PERIOD 50.0 //力传感器采样周期 50ms
 #define Sec_Dis  25.0// 导绳盘间距
 #define h1 12.5      // 导绳盘间距/2 近端
 #define h2 12.5      // 导绳盘间距/2 远端
@@ -69,8 +70,6 @@ signals:
     void sig_current(int,int,int, int);
     void sig_PPM();
     void sig_angle(int);
-    // void sig_clb_start(char *);
-    // void sig_clb_stop();
     void sig_singleCurrent(int,int,int,int,int);
     void Tele_Caculate(double, double, const bool, const bool);
 
@@ -83,14 +82,12 @@ private:
     bool STM32_Flag; //标志 stm32连接成功
     bool Total_Stop_Flag;
     bool Record_Angle_Flag;
-    // bool PPM_Flag; //标志 电机切换为PPM位置模式
     bool Feedback_Recv_Flag; // 下位机数据接收完成标志位
     bool CurMode_PPM_Flag;//电流模式下切回位置模式标志位
     bool MultiMotor_CurMode_Flag;//各电流模式互斥标志位
     bool Planned_Motion_Flag;//离线路径运动标志位
     bool Continue_Pull_Flag; //maoxn 电机调试连续拉绳标志位
     bool Continue_Loose_Flag;//maoxn 电机调试连续放松标志位
-    bool Zero_or_autoForce_Switch;//回零过程中 角度回零与力配合切换标志位
     bool Setzero_Move_Flag;//回零标志位
     bool Joint_Move_Flag;//角度运动标志位
     bool Tension_alert_send_flag; //前一次张力监控标识符
@@ -106,7 +103,6 @@ private:
 
     //类实例化
     Serial *m_serial;
-    // Joystick *joystick;
     Communication *communication;
     MotionPlan *Planner;
 
@@ -131,10 +127,7 @@ private:
     double Pre_Angle_Diff_Max; // 积分累积限幅
     double Max_Tension; //最大拉力
     double best_force_tar[3]; //零位时驱动绳理想张力 关节0 1 2
-    // double best_force_step;//阶梯力阶梯差值
     double Max_Motor_Loose;//放松量限制
-    double  Cur_Base_Pos;//底座电机当前位置
-    double base_move_length;//底座电机驱动量
     double Force_Threshold;//力平衡阈值
     //运动学
     Eigen::MatrixXd Cal_Len_Diff(double Tar_Ang_Local[][2], double Cur_Ang_Local[][2]); //计算控制i关节的k绳 在关节j 从Cur_Ang_Local 到 Tar_Ang_Local 绳长变化量
@@ -145,16 +138,18 @@ private:
 
     vector<std::array<double, 15>> DataContainer;//存放将要输出到txt的张力和关节角
 
-    //遥操作相关
-    vector<array<double, 6> > Motion_Data;
-    Eigen::VectorXd Ang_Tele;
-    int Cur_Ang_Path_Frame;
-    int Frame_Index_Temp;
+    //离线路径相关
+    vector<array<double, 6> > Motion_Data; //离线路径
+    int trajectory_count;// 离线路径 计数器
+    Eigen::VectorXd Ang_Tele;//遥操作
 
-    // /////////////////////////////////////////////////函数/////////////////////////////////////////
+    // /////////////////////////////////函数/////////////////////////////////////////
     inline bool check_all();//运行所有检查项: 角度传感器 传感器接收 PPM模式 力超限
     bool Force_Check(); 
     bool force_refine(Eigen::MatrixXd&,int);// 角度回零后对驱动绳张力重新调整 仅在回零时启动
+
+
+    inline void read_trajectory_1step();//从离线路径中加载单步运动目标
 
     //运动学
     double Cal_Point_Dis(double *P ,double a ,double b);
@@ -197,19 +192,13 @@ private slots:
     void on_SetZero_pushButton_clicked();
     void on_Planned_Motion_Button_clicked();//按下Planned_Motion_Button后 加载预规划路径
     void on_serialCon_pushButton_clicked();
-    // void on_set_best_force_tar_btn_clicked();
     void on_set_P_ZeroForce_btn_clicked();
     void on_set_P_Angle_btn_clicked();
     void on_set_Ang_Threshold_btn_clicked();
     void on_set_Max_Tension_btn_clicked();
-    // void on_set_best_force_step_btn_clicked();
     void on_set_P_Force_btn_clicked();
     void on_set_Force_Threshold_btn_clicked();
-    // void on_Sec12_Move_checkBox_stateChanged(int arg1);
     void on_SetAngBias_pushButton_clicked();//将用户在输入的​​新偏置值​​存入数组Tar_Bias,即时更新界面上显示的"当前偏置值"
-    // void on_force_lineEdit_1_windowIconChanged(const QIcon &icon);
-    // void on_force_lineEdit_1_cursorPositionChanged(int arg1, int arg2);
-    // void on_force_lineEdit_1_textChanged(const QString &arg1);
     void on_RecordData_pushButton_clicked();// 按下 记录 按钮
     void on_SaveData_pushButton_clicked();// 按下 存储 按钮
 };
