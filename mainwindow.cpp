@@ -626,7 +626,7 @@ void MainWindow::Reach_Target()
         for (j = 0; j < 2; j++)
         {
             double Ang_delta = Tar_Ang[i][j] - Cur_Ang[i][j];
-            if(fabs(Ang_delta) >= tarAng_delta_thr && fabs(Ang_delta) < 15)// 屏蔽 大于15度 过小 的角度误差
+            if(fabs(Ang_delta) >= tarAng_delta_thr && fabs(Ang_delta) < 2)// 屏蔽 大于2度 过小 的角度误差
                 P_dyn = P_Angle;//固定比例项系数 0.7
             else
                 P_dyn = 0;
@@ -1479,4 +1479,5 @@ void MainWindow::on_SaveData_pushButton_clicked()
     saveDataToFile(fileName);
     ui->RecordData_pushButton->setEnabled(true);
 }
+
 
