@@ -464,11 +464,11 @@ inline bool MainWindow::check_all()
         SetTip("不能运动，数据接收不完整");
         return false;
     }
-    if(!Force_Check() )//拉力监控
-    {
-        SetTip("不能运动，张力超限");
-        return false;
-    }
+    // if(!Force_Check() )//拉力监控
+    // {
+    //     SetTip("不能运动，张力超限");
+    //     return false;
+    // }
     return true;
 }
 
@@ -620,21 +620,22 @@ void MainWindow::Reach_Target()
 
     // /////////////////P控制位置-----计算驱动量/////////////////////////////
     // 根据目标角度计算P
-    double P_dyn = 0;
     for (i = SEC_START_INDEX; i < SECTION_NUM; i++)
     {
         for (j = 0; j < 2; j++)
         {
             double Ang_delta = Tar_Ang[i][j] - Cur_Ang[i][j];
-            if(fabs(Ang_delta) >= tarAng_delta_thr && fabs(Ang_delta) < 2)// 屏蔽 大于2度 过小 的角度误差
-                P_dyn = P_Angle;//固定比例项系数 0.7
-            else
-                P_dyn = 0;
+            if(fabs(Ang_delta) <= tarAng_delta_thr)
+                Ang_delta = 0;
+            else if (fabs(Ang_delta) >= 2)
+                Ang_delta = copysign(1.0, Ang_delta) * 2;
 
-            Tar_Ang_P[i][j] =Cur_Ang[i][j] + Ang_delta * P_dyn + Pre_Angle_Diff[i][j] * I_Angle;//I 0.002
+            double P_term = P_Angle * Ang_delta; //固定比例项系数 0.7
+
+            Tar_Ang_P[i][j] =Cur_Ang[i][j] + P_term + Pre_Angle_Diff[i][j] * I_Angle;//I 0.002
             Pre_Angle_Diff[i][j] += Ang_delta;//从时间0到当前时刻 误差的累积
             if(Pre_Angle_Diff[i][j] > Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = Pre_Angle_Diff_Max;// 角度误差累积限幅
-            if(Pre_Angle_Diff[i][j] < -Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = -Pre_Angle_Diff_Max;
+            else if(Pre_Angle_Diff[i][j] < -Pre_Angle_Diff_Max) Pre_Angle_Diff[i][j] = -Pre_Angle_Diff_Max;
 
             double Tar_Ang_P_delta = Tar_Ang_P[i][j] - Cur_Ang[i][j]; // 调整后的目标位置变化量
             if (fabs(Tar_Ang_P_delta) >= Ang_Diff_Max)// 输出限幅：防止单步变化过大
@@ -820,7 +821,7 @@ void MainWindow::SetForce(QByteArray buffer,int index)
     {
         for(int j=0;j<3;j++)
         {
-            Force_array[i][j] =Serial_dispCH[j+i*SECTION_NUM]*10 -Force_array_bias[i][j];//原始数据为kg 这边转换为N
+            Force_array[i][j] = -(Serial_dispCH[j+i*SECTION_NUM]*10 -Force_array_bias[i][j]);//原始数据为kg 这边转换为N
             QLineEdit* text_disp = this->findChild<QLineEdit*>("force_lineEdit_"+QString::number(i+j*SECTION_NUM+1));
             text_disp->setText(QString::number(Force_array[i][j],'f',3));
         }
@@ -1479,5 +1480,4 @@ void MainWindow::on_SaveData_pushButton_clicked()
     saveDataToFile(fileName);
     ui->RecordData_pushButton->setEnabled(true);
 }
-
 

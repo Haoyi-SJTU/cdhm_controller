@@ -121,7 +121,7 @@ private:
 
     double Pre_Angle_Diff[3][3];
     double Sec12_Tar_Ang_Init[2];
-    double tarAng_delta_thr;//角度回零阈值
+    double tarAng_delta_thr;//角度阈值
     double P_ZeroForce;//角度回零过程中 力补偿P参数
     double P_Angle,P_Force,I_Angle; //角度回零 与力配合 p参数 i参数
     double Pre_Angle_Diff_Max; // 积分累积限幅
