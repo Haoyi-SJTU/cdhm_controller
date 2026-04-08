@@ -1,7 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-//old
 
 int PLAN_FRAME;
 int CLB_FLAG;
@@ -13,12 +12,29 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     parm_init();
-    function_connect();
+    function_connect();// 连接信号与槽
     ui_init();
+
+    // 初始化 AI 模型 共享数据
+    std::string model_path = "/home/yuanzhi/Desktop/hrr/residual_physics/beam_model/config_real/ResMLPResidual2 ValLoss0.1269/residual_model.onnx";
+    ai_model = new RobotAIController(model_path);
+    shared_q_idea.resize(6, 0.0f); // 关节角 6维
+    shared_c_tens.resize(9, 0.0f); // 绳索张力 9维
+    shared_cable_residual.resize(9, 0.0f);
+    // 启动 AI 子线程
+    is_running = true;
+    ai_thread = std::thread(&MainWindow::aiInferenceLoop, this);
 }
 
 MainWindow::~MainWindow()
 {
+    // 安全退出子线程
+    is_running = false;
+    if (ai_thread.joinable()) {
+        ai_thread.join();
+    }
+    delete ai_model;
+
     delete ui;
 }
 
@@ -27,7 +43,6 @@ void MainWindow::ui_init()
     ui->forceRead_pushButton->setEnabled(false);
     ui->SaveData_pushButton->setEnabled(false);
     ui->Record_Angle_Open_pushButton->setEnabled(false);
-    // ui->Cur_Base_Pos_lineEdit->setText(QString::number(Cur_Base_Pos));
 
     for (int i = 0; i < 3; ++i)
     {
@@ -371,21 +386,6 @@ Eigen::MatrixXd MainWindow::Cal_Len_Diff(double Tar_Ang_Local[][2], double Cur_A
 // 导出 力传感器和编码器 数据
 void MainWindow::saveDataToFile(const QString& filename)
 {
-    // std::ofstream outFile("../data_output/force_joint_data.txt", std::ios::app);// 以追加模式打开文件
-    // if (!outFile.is_open())
-    // {
-    //     std::cerr << "错误：无法打开文件 " << std::endl;
-    //     return;
-    // }
-    // outFile << std::fixed << std::setprecision(6);// 设置输出格式：固定小数点，保留6位小数
-    // for (int i = 0; i < 3; ++i)
-    //     outFile << forceArray[i][0]<< " " << forceArray[i][1]<< " " << forceArray[i][2]<< " ";
-    // for (int i = 0; i < 3; ++i)
-    //     outFile << Cur_Ang[i][0]<< " " << Cur_Ang[i][1];
-    // outFile << std::endl;// 完成一行后换行
-    // outFile.close();// 关闭文件
-    // cout<<"success write"<<endl;
-
 
     if (DataContainer.empty())
     {
@@ -519,7 +519,7 @@ inline void MainWindow::read_trajectory_1step()
     }
 }
 
-// 控制机械臂到达某个目标 Timer_Reach_Target定时器按照 触发
+// 控制机械臂到达某个目标 Timer_Reach_Target定时器触发
 void MainWindow::Reach_Target()
 {
     if (!check_all())// 检查项: 角度传感器 传感器接收 PPM模式 力超限
@@ -539,6 +539,27 @@ void MainWindow::Reach_Target()
     double Tar_Ang_P[SECTION_NUM][2];
     memset(Tar_Ang_P, 0, sizeof (Tar_Ang_P));
     bool Emit_Flag = false;//防止多次Emit信号的标志位
+
+    // 读取机器人当前力位数据
+    std::vector<float> current_q = {Cur_Ang[0][0],Cur_Ang[0][1],Cur_Ang[1][0],Cur_Ang[1][1],Cur_Ang[2][0],Cur_Ang[2][1]};
+    std::vector<float> current_t = {Force_array[0][0], Force_array[0][1], Force_array[0][2],
+        Force_array[1][0], Force_array[1][1], Force_array[1][2], Force_array[2][0], Force_array[2][1], Force_array[2][2]};
+    std::vector<float> latest_ai_residual(9, 0.0f);
+    // 加锁：更新传感器数据给 AI，并获取 AI 的最新预测结果
+    {
+        std::lock_guard<std::mutex> lock(data_mutex);
+        shared_q_idea = current_q;// 将最新状态给 AI（AI线程下一次循环会用到）
+        shared_c_tens = current_t;
+        // cout<<"shared_q_idea(main thread) = "<<shared_q_idea[0]<<" "<<shared_q_idea[1]<<" "<<shared_q_idea[2]<<" "<<shared_q_idea[3]<<" "<<shared_q_idea[4]<<" "<<shared_q_idea[5]<<endl;
+        cout<<"shared_c_tens(main thread) = "
+             <<shared_c_tens[0]<<" "<<shared_c_tens[1]<<" "<<shared_c_tens[2]<<" "
+             <<shared_c_tens[3]<<" "<<shared_c_tens[4]<<" "<<shared_c_tens[5]<<" "
+             <<shared_c_tens[6]<<" "<<shared_c_tens[7]<<" "<<shared_c_tens[8]<<endl;
+        latest_ai_residual = shared_cable_residual;// 拿到 AI 最新的预测残差
+    }
+
+    // cout<<"current_q = "<<current_q[0]<<" "<<current_q[1]<<" "<<current_q[2]<<" "<<current_q[3]<<" "<<current_q[4]<<" "<<current_q[5]<<endl;
+    //
 
     // 离线路径
     if(Planned_Motion_Flag)
@@ -657,8 +678,7 @@ void MainWindow::Reach_Target()
 
     if(Save_Force_Flag)
     {
-        accumulateForceData();
-        // saveDataToFile(); // 导出力传感器数据
+        accumulateForceData(); // 导出力传感器数据
     }
 
     //回零过程中----非控制关节不发送驱动量
@@ -687,7 +707,7 @@ void MainWindow::Reach_Target()
         Feedback_Recv_Flag = false;
         Emit_Flag = true;
     }
-    // }
+
 
     //条件: F407已连接 不丢包 不回零 不关节运动 不离线路径
     if ( (!Emit_Flag&&STM32_Flag) && Feedback_Recv_Flag && !Setzero_Move_Flag && !Joint_Move_Flag && !Planned_Motion_Flag )
@@ -700,6 +720,56 @@ void MainWindow::Reach_Target()
 
 }
 
+// AI 子线程
+void MainWindow::aiInferenceLoop()
+{
+    // 子线程内部暂存数据的局部变量，避免长时间占用锁
+    std::vector<float> local_q;
+    std::vector<float> local_c;
+    std::vector<float> local_residual(9, 0.0f);
+
+    while (is_running) {
+        // 加锁拷贝数据
+        {
+            std::lock_guard<std::mutex> lock(data_mutex);
+            local_q = shared_q_idea;
+            local_c = shared_c_tens;
+            // cout<<"shared_q_idea(sub thread) = "<<shared_q_idea[0]<<" "<<shared_q_idea[1]<<" "<<shared_q_idea[2]<<" "<<shared_q_idea[3]<<" "<<shared_q_idea[4]<<" "<<shared_q_idea[5]<<endl;
+        }
+
+        // 如果数据还没准备好，稍微等一下
+        if (local_q.empty() || local_c.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        // cout<<"curent angle= "<<local_q[0]<<" "<<local_q[1]<<" "<<local_q[2]<<" "<<local_q[3]<<" "<<local_q[4]<<" "<<local_q[5]<<endl;
+
+        // AI 推理
+        try {
+            local_residual = ai_model->computeResidualForces(local_q, local_c);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "AI 推理异常: " << e.what() << std::endl;
+            // 可以加入错误处理机制
+        }
+
+        // cout<<"local_residual(sub thread) = "
+        //      <<local_residual[0]<<" "<<local_residual[1]<<" "<<local_residual[2]<<" "
+        //      <<local_residual[3]<<" "<<local_residual[4]<<" "<<local_residual[5]<<" "
+        //     <<local_residual[6]<<" "<<local_residual[7]<<" "<<local_residual[8]<<endl;
+
+
+        // 3. 加锁：将算出的最新残差写回共享区
+        {
+            std::lock_guard<std::mutex> lock(data_mutex);
+            shared_cable_residual = local_residual;
+        }
+
+        // 可选：如果不希望 AI 满载运行，可以控制一下 AI 推理的最高频率 (比如 100Hz)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
 
 
 
@@ -1480,4 +1550,5 @@ void MainWindow::on_SaveData_pushButton_clicked()
     saveDataToFile(fileName);
     ui->RecordData_pushButton->setEnabled(true);
 }
+
 

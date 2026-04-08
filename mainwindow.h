@@ -21,6 +21,14 @@
 
 #include <cmath>
 #include <utility>
+// 神经网络控制器
+#include <RobotAIController.h>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+
 
 #define Step_Test 0.02 //Maxon电机调试运动步长 一档速度
 #define CONTROL_PERIOD 50.0 //底层控制帧数 50ms/帧
@@ -143,6 +151,15 @@ private:
     int trajectory_count;// 离线路径 计数器
     Eigen::VectorXd Ang_Tele;//遥操作
 
+    //神经网络控制器
+    RobotAIController* ai_model; // AI 控制器指针
+    std::thread ai_thread;       // 线程控制
+    std::atomic<bool> is_running;// 线程控制
+    std::mutex data_mutex;       //共享数据
+    std::vector<float> shared_q_idea;// 输入给 AI 的数据
+    std::vector<float> shared_c_tens;
+    std::vector<float> shared_cable_residual; // AI 预测出来的结果
+
     // /////////////////////////////////函数/////////////////////////////////////////
     inline bool check_all();//运行所有检查项: 角度传感器 传感器接收 PPM模式 力超限
     bool Force_Check(); 
@@ -157,6 +174,9 @@ private:
     // 数据导出相关
     void accumulateForceData();// 添加数据到容器
     void saveDataToFile(const QString& filename);// 导出 力传感器和编码器 数据
+
+    //神经网络控制器
+    void aiInferenceLoop();// AI 子线程运行函数
 
 private slots:
 
