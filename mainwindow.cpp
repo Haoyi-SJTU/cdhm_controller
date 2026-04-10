@@ -16,7 +16,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui_init();
 
     // 初始化 AI 模型 共享数据
-    std::string model_path = "/home/yuanzhi/Desktop/hrr/residual_physics/beam_model/config_real/ResMLPResidual2 ValLoss0.1269/residual_model.onnx";
+    std::string model_path = "/home/yuanzhi/Desktop/hrr/residual_physics/beam_model/config_real/DeepResidualMLP ValLoss0.1540/residual_model.onnx";
     ai_model = new RobotAIController(model_path);
     shared_q_idea.resize(6, 0.0f); // 关节角 6维
     shared_c_tens.resize(9, 0.0f); // 绳索张力 9维
@@ -551,15 +551,18 @@ void MainWindow::Reach_Target()
         shared_q_idea = current_q;// 将最新状态给 AI（AI线程下一次循环会用到）
         shared_c_tens = current_t;
         // cout<<"shared_q_idea(main thread) = "<<shared_q_idea[0]<<" "<<shared_q_idea[1]<<" "<<shared_q_idea[2]<<" "<<shared_q_idea[3]<<" "<<shared_q_idea[4]<<" "<<shared_q_idea[5]<<endl;
-        cout<<"shared_c_tens(main thread) = "
-             <<shared_c_tens[0]<<" "<<shared_c_tens[1]<<" "<<shared_c_tens[2]<<" "
-             <<shared_c_tens[3]<<" "<<shared_c_tens[4]<<" "<<shared_c_tens[5]<<" "
-             <<shared_c_tens[6]<<" "<<shared_c_tens[7]<<" "<<shared_c_tens[8]<<endl;
+        // cout<<"shared_c_tens(main thread) = "
+        //      <<shared_c_tens[0]<<" "<<shared_c_tens[1]<<" "<<shared_c_tens[2]<<" "
+        //      <<shared_c_tens[3]<<" "<<shared_c_tens[4]<<" "<<shared_c_tens[5]<<" "
+        //      <<shared_c_tens[6]<<" "<<shared_c_tens[7]<<" "<<shared_c_tens[8]<<endl;
         latest_ai_residual = shared_cable_residual;// 拿到 AI 最新的预测残差
     }
 
     // cout<<"current_q = "<<current_q[0]<<" "<<current_q[1]<<" "<<current_q[2]<<" "<<current_q[3]<<" "<<current_q[4]<<" "<<current_q[5]<<endl;
-    //
+    // cout<<"latest_ai_residual(main thread) = "
+    //      <<latest_ai_residual[0]<<" "<<latest_ai_residual[1]<<" "<<latest_ai_residual[2]<<" "
+    //      <<latest_ai_residual[3]<<" "<<latest_ai_residual[4]<<" "<<latest_ai_residual[5]<<" "
+    //      <<latest_ai_residual[6]<<" "<<latest_ai_residual[7]<<" "<<latest_ai_residual[8]<<endl;
 
     // 离线路径
     if(Planned_Motion_Flag)
@@ -635,7 +638,11 @@ void MainWindow::Reach_Target()
         }
     }
 
-    cout<<"target angle= "<<Tar_Ang[0][0]<<" "<<Tar_Ang[0][1]<<" "<<Tar_Ang[1][0]<<" "<<Tar_Ang[1][1]<<" "<<Tar_Ang[2][0]<<" "<<Tar_Ang[2][1]<<endl;
+    // cout<<"target angle= "<<Tar_Ang[0][0]<<" "<<Tar_Ang[0][1]<<" "<<Tar_Ang[1][0]<<" "<<Tar_Ang[1][1]<<" "<<Tar_Ang[2][0]<<" "<<Tar_Ang[2][1]<<endl;
+    // cout<<"Force_array (main thread) = "
+    //      <<Force_array[0][0]<<" "<<Force_array[0][1]<<" "<<Force_array[0][2]<<" "
+    //      <<Force_array[1][0]<<" "<<Force_array[1][1]<<" "<<Force_array[1][2]<<" "
+    //      <<Force_array[2][0]<<" "<<Force_array[2][1]<<" "<<Force_array[2][2]<<endl;
 
 
 
