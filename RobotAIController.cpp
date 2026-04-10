@@ -59,9 +59,8 @@ std::vector<float> RobotAIController::computeResidualForces(const std::vector<fl
         throw std::invalid_argument("输入数据维度错误：q_idea 需要 6 维，c_tens 需要 9 维！");
     }
 
-    // 直接覆盖已预分配的内存，全程零内存分配 (Zero Allocation)
-    std::copy(q_idea.begin(), q_idea.end(), input_data.begin());
-    std::copy(c_tens.begin(), c_tens.end(), input_data.begin() + q_idea.size());
+    // q_idea c_tens归一化 合并到input_data
+    normalize_and_combine_v2(q_idea, c_tens);
 
     try
     {
@@ -93,26 +92,26 @@ std::vector<float> RobotAIController::computeResidualForces(const std::vector<fl
     }
 }
 
-// q_idea归一化 6维
-std::vector<float> RobotAIController::normalize_q_idea(const std::vector<float>& q_idea) const {
-    std::vector<float> res(6);
-    for (size_t i = 0; i < 6; ++i) {
-        res[i] = (q_idea[i] - q_idea_mean[i]) / q_idea_std[i];
-    }
-    return res;
-}
+// q_idea c_tens归一化 合并到input_data
+void RobotAIController::normalize_and_combine_v2(const std::vector<float>& q_idea,
+                              const std::vector<float>& c_tens) {
+    // assert(q_idea.size() == q_idea_mean.size());
+    // assert(c_tens.size() == c_tens_mean.size());
 
-// c_tens归一化
-std::vector<float> RobotAIController::normalize_c_tens(const std::vector<float>& c_tens) const {
-    std::vector<float> res(9);
-    for (size_t i = 0; i < 9; ++i) {
-        res[i] = (c_tens[i] - c_tens_mean[i]) / c_tens_std[i];
+    // 直接归一化q_idea到input_data前半部分
+    for (size_t i = 0; i < q_idea.size(); ++i) {
+        input_data[i] = (q_idea[i] - q_idea_mean[i]) / q_idea_std[i];
     }
-    return res;
+
+    // 直接归一化c_tens到input_data后半部分
+    size_t offset = q_idea.size();
+    for (size_t i = 0; i < c_tens.size(); ++i) {
+        input_data[offset + i] = (c_tens[i] - c_tens_mean[i]) / c_tens_std[i];
+    }
 }
 
 // 输出c_resi 反归一化 9维
-std::vector<float> RobotAIController::denormalize_c_resi(const std::vector<float>& c_resi_norm) const {
+std::vector<float> RobotAIController::denormalize_c_resi(const std::vector<float>& c_resi_norm) {
     std::vector<float> res(9);
     for (size_t i = 0; i < 9; ++i) {
         res[i] = c_resi_norm[i] * c_resi_std[i] + c_resi_mean[i];

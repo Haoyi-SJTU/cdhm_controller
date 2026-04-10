@@ -34,7 +34,8 @@ public:
     // 推理函数：在控制循环中调用
     std::vector<float> computeResidualForces(const std::vector<float>& q_idea, const std::vector<float>& c_tens);
 
-    std::vector<float> normalize_q_idea(const std::vector<float>& q_idea) const;// q_idea归一化 6维
-    std::vector<float> normalize_c_tens(const std::vector<float>& c_tens) const;// c_tens归一化
-    std::vector<float> denormalize_c_resi(const std::vector<float>& c_resi_norm) const;// 输出c_resi 反归一化 9维
+    // std::vector<float> normalize_q_idea(const std::vector<float>& q_idea);// q_idea归一化 6维
+    // std::vector<float> normalize_c_tens(const std::vector<float>& c_tens);// c_tens归一化
+    void normalize_and_combine_v2(const std::vector<float>& q_idea, const std::vector<float>& c_tens); // q_idea c_tens归一化 合并到input_data
+    std::vector<float> denormalize_c_resi(const std::vector<float>& c_resi_norm);// 输出c_resi 反归一化 9维
 };
