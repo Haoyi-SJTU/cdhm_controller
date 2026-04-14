@@ -16,7 +16,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui_init();
 
     // 初始化 AI 模型 共享数据
-    std::string model_path = "/home/yuanzhi/Desktop/hrr/residual_physics/beam_model/config_real/DeepResidualMLP ValLoss0.1540/residual_model.onnx";
+    std::string model_path = "/home/yuanzhi/Desktop/hrr/residual_physics/beam_model/config_real/ResMLPResidual2 ValLoss0.1269/residual_model.onnx";
     ai_model = new RobotAIController(model_path);
     shared_q_idea.resize(6, 0.0f); // 关节角 6维
     shared_c_tens.resize(9, 0.0f); // 绳索张力 9维
@@ -82,11 +82,11 @@ void MainWindow::parm_init()
     memset(Tar_Bias, 0, sizeof(Tar_Bias));//角度零位偏移量
 
     //角度零位偏移量
-    Tar_Bias[0][0] = -0.63;//1a 水平
-    Tar_Bias[0][1] = 0.0;//2b 竖直
-    Tar_Bias[1][0] = 0.25;//2a 水平
-    Tar_Bias[1][1] = -0.74;//2b 竖直
-    Tar_Bias[2][0] = -1.23; //3a 水平
+    Tar_Bias[0][0] = -0.5;//1a 水平
+    Tar_Bias[0][1] = -0.17;//2b 竖直
+    Tar_Bias[1][0] = 0.41;//2a 水平
+    Tar_Bias[1][1] = -0.66;//2b 竖直
+    Tar_Bias[2][0] = -1.14; //3a 水平
     Tar_Bias[2][1] = -2.27; //3b 竖直
 
     // 力传感器零位偏移量
@@ -110,7 +110,7 @@ void MainWindow::parm_init()
 
     //力回零参数
     P_Force=0.0005;//角度回零 与力配合 p参数
-    Max_Tension=195; //最大拉力
+    Max_Tension= 395; //最大拉力 N 张力监测阈值
     best_force_tar[0]=120; //零位时驱动绳理想张力 关节0
     best_force_tar[1]=100; //零位时驱动绳理想张力 关节1
     best_force_tar[2]= 80; //零位时驱动绳理想张力 关节2
@@ -130,6 +130,17 @@ void MainWindow::parm_init()
     PLAN_FRAME=20;
     Planned_Frame=0;
 
+    // PID
+    // 在启动定时器前，将插补初值对齐当前实际角度，防止开机“疯抢”
+    for (int i = SEC_START_INDEX; i < SECTION_NUM; i++) {
+        for (int j = 0; j < 2; j++) {
+            Global_Tar_Ang[i][j] = Cur_Ang[i][j];// 上层下发的最终目标角度
+            Start_Ang[i][j] = Cur_Ang[i][j];// 当前插补周期的起始角度
+            Interpolated_Tar_Ang[i][j] = Cur_Ang[i][j]; // 当前2ms周期的瞬时插补目标角度
+        }
+    }
+    interp_step = 25; // 初始设为已完成插补状态
+
     CLB_FLAG=0;
     //定时器
     Timer_secMotor  = new QTimer(this);
@@ -137,6 +148,9 @@ void MainWindow::parm_init()
 
     Timer_Reach_Target = new QTimer(this);
     Timer_Reach_Target->setTimerType(Qt::PreciseTimer);
+
+    Timer_PID_Control = new QTimer(this);
+    Timer_PID_Control->setTimerType(Qt::PreciseTimer);
 
     Timer_forceRead=new QTimer(this);
     Timer_forceRead->setTimerType(Qt::PreciseTimer);
@@ -160,10 +174,12 @@ void MainWindow::function_connect()
     connect(this,SIGNAL(sig_singleCurrent(int,int,int,int,int)),communication,SLOT(Send_SingleCurrent(int,int,int,int,int)));
     connect(this,SIGNAL(sig_PPM()),communication,SLOT(Send_PPM()));//修改maxon电机控制模式为位置模式
     connect(Planner,SIGNAL(ReturnAng(Eigen::VectorXd)),this,SLOT(Recv_Ang_Path(Eigen::VectorXd)));//planning.cpp使用 发布规划结果
-    connect(Timer_secMotor, &QTimer::timeout, this, &MainWindow::SecMotor_Send);//maxon 电机调试定时器
     connect(m_serial,&Serial::returnForce,this,&MainWindow::SetForce);//力传感信号returnForce 槽函数SetForce
-    connect(Timer_forceRead, SIGNAL(timeout()), this, SLOT(forceRead()));//定时器触发 读力传感器
-    connect(Timer_Reach_Target, SIGNAL(timeout()), this, SLOT(Reach_Target()));
+    //定时器
+    connect(Timer_secMotor, &QTimer::timeout, this, &MainWindow::SecMotor_Send);//maxon 电机调试定时器
+    connect(Timer_forceRead, &QTimer::timeout, this, &MainWindow::forceRead);//定时器触发 读力传感器
+    connect(Timer_Reach_Target, &QTimer::timeout, this, &MainWindow::Reach_Target);
+    connect(Timer_PID_Control, &QTimer::timeout, this, &MainWindow::PID_Control_Loop);
     connect(this,SIGNAL(Tele_Caculate(double, double, const bool, const bool)),Planner,SLOT(Tele_operation(double, double, const bool, const bool)));
 }
 
@@ -278,6 +294,9 @@ void MainWindow::Total_Stop()
     if(Timer_Reach_Target->isActive()){
         Timer_Reach_Target->stop();//停止触发reach_target函数
     }
+    if(Timer_PID_Control->isActive()){
+        Timer_PID_Control->stop();//停止触发reach_target函数
+    }
 }
 
 //允许运动：按钮在START字样时被按下 或     触发reach_target函数
@@ -287,6 +306,9 @@ void MainWindow::Total_Start()
     ui->Total_Stop_Button->setText("TOTALSTOP"); //按钮设置为stop字样 下次按下则禁止运动
     if(!Timer_Reach_Target->isActive()){
         Timer_Reach_Target->start(CONTROL_PERIOD);//触发reach_target函数
+    }
+    if(!Timer_PID_Control->isActive()){
+        Timer_PID_Control->start(PID_PERIOD);//触发reach_target函数
     }
 }
 
@@ -541,28 +563,21 @@ void MainWindow::Reach_Target()
     bool Emit_Flag = false;//防止多次Emit信号的标志位
 
     // 读取机器人当前力位数据
-    std::vector<float> current_q = {Cur_Ang[0][0],Cur_Ang[0][1],Cur_Ang[1][0],Cur_Ang[1][1],Cur_Ang[2][0],Cur_Ang[2][1]};
-    std::vector<float> current_t = {Force_array[0][0], Force_array[0][1], Force_array[0][2],
-        Force_array[1][0], Force_array[1][1], Force_array[1][2], Force_array[2][0], Force_array[2][1], Force_array[2][2]};
+    std::vector<float> current_q = {static_cast<float>(Cur_Ang[0][0]),static_cast<float>(Cur_Ang[0][1]),
+                                    static_cast<float>(Cur_Ang[1][0]),static_cast<float>(Cur_Ang[1][1]),
+                                    static_cast<float>(Cur_Ang[2][0]),static_cast<float>(Cur_Ang[2][1])};
+    std::vector<float> current_t = {static_cast<float>(Force_array[0][0]), static_cast<float>(Force_array[0][1]), static_cast<float>(Force_array[0][2]),
+                                    static_cast<float>(Force_array[1][0]), static_cast<float>(Force_array[1][1]), static_cast<float>(Force_array[1][2]),
+                                    static_cast<float>(Force_array[2][0]), static_cast<float>(Force_array[2][1]), static_cast<float>(Force_array[2][2])};
     std::vector<float> latest_ai_residual(9, 0.0f);
     // 加锁：更新传感器数据给 AI，并获取 AI 的最新预测结果
     {
         std::lock_guard<std::mutex> lock(data_mutex);
         shared_q_idea = current_q;// 将最新状态给 AI（AI线程下一次循环会用到）
         shared_c_tens = current_t;
-        // cout<<"shared_q_idea(main thread) = "<<shared_q_idea[0]<<" "<<shared_q_idea[1]<<" "<<shared_q_idea[2]<<" "<<shared_q_idea[3]<<" "<<shared_q_idea[4]<<" "<<shared_q_idea[5]<<endl;
-        // cout<<"shared_c_tens(main thread) = "
-        //      <<shared_c_tens[0]<<" "<<shared_c_tens[1]<<" "<<shared_c_tens[2]<<" "
-        //      <<shared_c_tens[3]<<" "<<shared_c_tens[4]<<" "<<shared_c_tens[5]<<" "
-        //      <<shared_c_tens[6]<<" "<<shared_c_tens[7]<<" "<<shared_c_tens[8]<<endl;
         latest_ai_residual = shared_cable_residual;// 拿到 AI 最新的预测残差
     }
 
-    // cout<<"current_q = "<<current_q[0]<<" "<<current_q[1]<<" "<<current_q[2]<<" "<<current_q[3]<<" "<<current_q[4]<<" "<<current_q[5]<<endl;
-    // cout<<"latest_ai_residual(main thread) = "
-    //      <<latest_ai_residual[0]<<" "<<latest_ai_residual[1]<<" "<<latest_ai_residual[2]<<" "
-    //      <<latest_ai_residual[3]<<" "<<latest_ai_residual[4]<<" "<<latest_ai_residual[5]<<" "
-    //      <<latest_ai_residual[6]<<" "<<latest_ai_residual[7]<<" "<<latest_ai_residual[8]<<endl;
 
     // 离线路径
     if(Planned_Motion_Flag)
@@ -638,11 +653,7 @@ void MainWindow::Reach_Target()
         }
     }
 
-    // cout<<"target angle= "<<Tar_Ang[0][0]<<" "<<Tar_Ang[0][1]<<" "<<Tar_Ang[1][0]<<" "<<Tar_Ang[1][1]<<" "<<Tar_Ang[2][0]<<" "<<Tar_Ang[2][1]<<endl;
-    // cout<<"Force_array (main thread) = "
-    //      <<Force_array[0][0]<<" "<<Force_array[0][1]<<" "<<Force_array[0][2]<<" "
-    //      <<Force_array[1][0]<<" "<<Force_array[1][1]<<" "<<Force_array[1][2]<<" "
-    //      <<Force_array[2][0]<<" "<<Force_array[2][1]<<" "<<Force_array[2][2]<<endl;
+    cout<<"target angle= "<<Tar_Ang[0][0]<<" "<<Tar_Ang[0][1]<<" "<<Tar_Ang[1][0]<<" "<<Tar_Ang[1][1]<<" "<<Tar_Ang[2][0]<<" "<<Tar_Ang[2][1]<<endl;
 
 
 
@@ -715,7 +726,6 @@ void MainWindow::Reach_Target()
         Emit_Flag = true;
     }
 
-
     //条件: F407已连接 不丢包 不回零 不关节运动 不离线路径
     if ( (!Emit_Flag&&STM32_Flag) && Feedback_Recv_Flag && !Setzero_Move_Flag && !Joint_Move_Flag && !Planned_Motion_Flag )
     {
@@ -725,6 +735,82 @@ void MainWindow::Reach_Target()
         Emit_Flag = true;
     }
 
+}
+
+// double Global_Tar_Ang[SECTION_NUM][2];       // 上层下发的最终目标角度
+// double Start_Ang[SECTION_NUM][2];            // 当前插补周期的起始角度
+// double Interpolated_Tar_Ang[SECTION_NUM][2]; // 当前2ms周期的瞬时插补目标角度
+// int interp_step;                             // 当前插补步数
+// const int INTERP_TOTAL_STEPS = 25;           // 插补总步数 = 50ms(上层周期) / 2ms(底层周期)
+
+// 新增500Hz底层控制与插补槽函数 (底层)
+void MainWindow::PID_Control_Loop()
+{
+    // 1. 核心：S型加减速计算
+    // 归一化时间比例 t (0.0 到 1.0)
+    double t = (double)interp_step / INTERP_TOTAL_STEPS;
+    if (t > 1.0) t = 1.0;
+
+    // 三次多项式平滑公式: S(t) = 3t^2 - 2t^3
+    double s_curve_ratio = t * t * (3.0 - 2.0 * t);
+
+    // 步数递增
+    if (interp_step < INTERP_TOTAL_STEPS) {
+        interp_step++;
+    }
+
+    // // 2. 角度更新与 PID 闭环计算
+    // for (int i = SEC_START_INDEX; i < SECTION_NUM; i++)
+    // {
+    //     for (int j = 0; j < 2; j++)
+    //     {
+    //         // 计算当前2ms周期的瞬时目标角度
+    //         Interpolated_Tar_Ang[i][j] = Start_Ang[i][j] +
+    //                                      (Global_Tar_Ang[i][j] - Start_Ang[i][j]) * s_curve_ratio;
+
+    //         // 原有PID逻辑：注意这里对比的是插补后的小目标，不再是跨度很大的大目标
+    //         double Ang_delta = Interpolated_Tar_Ang[i][j] - Cur_Ang[i][j];
+
+    //         if (fabs(Ang_delta) <= tarAng_delta_thr)
+    //             Ang_delta = 0;
+    //         else if (fabs(Ang_delta) >= 2) // ⚠️ 见下方“关键工程提示”
+    //             Ang_delta = copysign(1.0, Ang_delta) * 2;
+
+    //         double P_term = P_Angle * Ang_delta;
+
+    //         Tar_Ang_P[i][j] = Cur_Ang[i][j] + P_term + Pre_Angle_Diff[i][j] * I_Angle;
+    //         Pre_Angle_Diff[i][j] += Ang_delta;
+
+    //         if (Pre_Angle_Diff[i][j] > Pre_Angle_Diff_Max)
+    //             Pre_Angle_Diff[i][j] = Pre_Angle_Diff_Max;
+    //         else if (Pre_Angle_Diff[i][j] < -Pre_Angle_Diff_Max)
+    //             Pre_Angle_Diff[i][j] = -Pre_Angle_Diff_Max;
+
+    //         double Tar_Ang_P_delta = Tar_Ang_P[i][j] - Cur_Ang[i][j];
+
+    //         if (fabs(Tar_Ang_P_delta) >= Ang_Diff_Max) //️ 见下方“关键工程提示”
+    //         {
+    //             const int sign = (Tar_Ang_P_delta > 0) ? 1 : -1;
+    //             Tar_Ang_P[i][j] = Cur_Ang[i][j] + sign * Ang_Diff_Max;
+    //         }
+    //     }
+    // }
+
+    // // 正运动学与下发
+    // secDrivenLength = Cal_Len_Diff(Tar_Ang_P, Cur_Ang);
+
+    // if (!Emit_Flag && STM32_Flag)
+    // {
+    //     if (Setzero_Move_Flag || Joint_Move_Flag)
+    //         emit(Send_Data(secDrivenLength, 0.0));
+    //     else
+    //     {
+    //         secDrivenLength = Eigen::MatrixXd::Zero(SECTION_NUM, 3);
+    //         emit(Send_Data(secDrivenLength, 0));
+    //     }
+    //     Feedback_Recv_Flag = false;
+    //     Emit_Flag = true;
+    // }
 }
 
 // AI 子线程
@@ -761,23 +847,16 @@ void MainWindow::aiInferenceLoop()
             // 可以加入错误处理机制
         }
 
-        // cout<<"local_residual(sub thread) = "
-        //      <<local_residual[0]<<" "<<local_residual[1]<<" "<<local_residual[2]<<" "
-        //      <<local_residual[3]<<" "<<local_residual[4]<<" "<<local_residual[5]<<" "
-        //     <<local_residual[6]<<" "<<local_residual[7]<<" "<<local_residual[8]<<endl;
-
-
-        // 3. 加锁：将算出的最新残差写回共享区
+        // 加锁：将算出的最新残差写回共享区
         {
             std::lock_guard<std::mutex> lock(data_mutex);
             shared_cable_residual = local_residual;
         }
 
-        // 可选：如果不希望 AI 满载运行，可以控制一下 AI 推理的最高频率 (比如 100Hz)
+        // 控制 AI 推理的最高频率 (比如 100Hz)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 }
-
 
 
 // 按下连接stm32F407按钮：更新电机位置​​、更新显示关节角,关节角超限检测
@@ -811,8 +890,6 @@ void MainWindow::on_serialCon_pushButton_clicked()
 {
     if(ui->serialCon_pushButton->text()=="RS485_Con")// 按下按钮 连接485
     {
-        // bool flag1= m_serial->connectSerialServer();
-        // bool flag2= m_serial->isConnected();
         if(m_serial->connectSerialServer() && m_serial->isConnected())
         {
             ui->serialCon_pushButton->setText("断开");
@@ -1014,9 +1091,6 @@ void MainWindow::on_Record_Angle_Open_pushButton_clicked()
         Record_Angle_Flag = true;
     }
 }
-
-
-
 
 
 // --------------------- 辅助功能相关 -------------------------
@@ -1240,8 +1314,8 @@ void MainWindow::on_SetZero_pushButton_clicked()
     //开始回零
     if(ui->SetZero_pushButton->text()=="启动")
     {
-        Sec_Setzero_Startindex = ui->secNumStart_spinBox->text().toInt();//回零起始范围
-        Sec_Setzero_Endindex = ui->secNumEnd_spinBox->text().toInt();
+        Sec_Setzero_Startindex = ui->secNumStart_spinBox->text().toInt() - 1;//回零起始范围
+        Sec_Setzero_Endindex = ui->secNumEnd_spinBox->text().toInt() - 1;
         ui->SetZero_pushButton->setText("停止");//“启动”按钮改为"停止"
 
         Setzero_Move_Flag=true;//回零运动状态

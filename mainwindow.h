@@ -32,7 +32,8 @@
 
 #define Step_Test 0.02 //Maxon电机调试运动步长 一档速度
 #define CONTROL_PERIOD 50.0 //底层控制帧数 50ms/帧
-#define FORCE_PERIOD 50.0 //力传感器采样周期 50ms
+#define PID_PERIOD 2.0 //底层控制帧数 50ms/帧
+#define FORCE_PERIOD 50.0   //力传感器采样周期 50ms
 #define Sec_Dis  25.0// 导绳盘间距
 #define h1 12.5      // 导绳盘间距/2 近端
 #define h2 12.5      // 导绳盘间距/2 远端
@@ -85,7 +86,10 @@ private:
     //变量
     Ui::MainWindow *ui;
     //定时器
-    QTimer *Timer_secMotor, *Timer_Reach_Target,*Timer_forceRead;
+    QTimer *Timer_secMotor;
+    QTimer *Timer_forceRead;
+    QTimer *Timer_Reach_Target;
+    QTimer *Timer_PID_Control;
     //bool 标志位
     bool STM32_Flag; //标志 stm32连接成功
     bool Total_Stop_Flag;
@@ -160,6 +164,14 @@ private:
     std::vector<float> shared_c_tens;
     std::vector<float> shared_cable_residual; // AI 预测出来的结果
 
+
+    // --- 插补相关变量 ---
+    double Global_Tar_Ang[3][2];       // 上层下发的最终目标角度
+    double Start_Ang[3][2];            // 当前插补周期的起始角度
+    double Interpolated_Tar_Ang[3][2]; // 当前2ms周期的瞬时插补目标角度
+    int interp_step;                   // 当前插补步数
+    const int INTERP_TOTAL_STEPS = 25; // 插补总步数 = 50ms(上层周期) / 2ms(底层周期)
+
     // /////////////////////////////////函数/////////////////////////////////////////
     inline bool check_all();//运行所有检查项: 角度传感器 传感器接收 PPM模式 力超限
     bool Force_Check(); 
@@ -184,7 +196,8 @@ private slots:
     // 传入电机位置信号和关节编码器信号，接收电机位置信号和关节编码器信号
     void Recv_Cur_Motor_Pos(Eigen::MatrixXd Read_Cur_Motor_Pos, Eigen::MatrixXd Read_Cur_Ang);
 
-    void Reach_Target();
+    void Reach_Target();        // 原20Hz上层规划槽函数
+    void PID_Control_Loop();    // 新增500Hz底层控制与插补槽函数 (底层)
     void forceRead();
     //接收传感器数据,参数类型与serial.h中的returnForce信号一致
     void SetForce(QByteArray buffer,int index);
